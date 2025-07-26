@@ -1,8 +1,9 @@
-#include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <sys/epoll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -10,12 +11,13 @@
 
 using namespace std;
 
-void handleClient(int readyFd, vector<int> *clientRemove) {
+void handleClient(int readyFd, int epollfd) {
   char clientMessage[1024] = {0};
   int recvValue = recv(readyFd, clientMessage, 1023, 0);
 
   if (recvValue <= 0) {
-    clientRemove->push_back(readyFd);
+    close(readyFd);
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, readyFd, nullptr);
     return;
   }
 
@@ -30,7 +32,8 @@ void handleClient(int readyFd, vector<int> *clientRemove) {
   } else {
     string serverReply = "Closing connection";
     write(readyFd, serverReply.c_str(), serverReply.size());
-    clientRemove->push_back(readyFd);
+    close(readyFd);
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, readyFd, nullptr);
   }
 }
 
@@ -66,54 +69,57 @@ void server() {
   }
 
   // Accept & Process Clients
-  vector<int> connections;
-  fd_set readfds;
+  // E-Poll
+  int maxConnections = 1000;
+  struct epoll_event ev;
+  vector<struct epoll_event> events(maxConnections);
+
+  // Create E-Poll instance
+  int epollfd = epoll_create1(0);
+  if (epollfd == -1) {
+    perror("Epoll error");
+    exit(EXIT_FAILURE);
+  }
+
+  ev.events = EPOLLIN;
+  ev.data.fd = socketDescriptor;
+
+  // Add socketDescriptor for monitoring
+  if (epoll_ctl(epollfd, EPOLL_CTL_ADD, socketDescriptor, &ev) == -1) {
+    perror("Epoll socketDescriptor error");
+    exit(EXIT_FAILURE);
+  }
 
   while (1) {
-    int maxFd = socketDescriptor;
-    FD_ZERO(&readfds);
-    FD_SET(socketDescriptor, &readfds);
+    int readyFds = epoll_wait(epollfd, &events[0], maxConnections, -1);
+    if (readyFds == -1) {
+      perror("epoll_wait error");
+      exit(EXIT_FAILURE);
+    }
 
-    for (int i = 0; i < connections.size(); i++) {
-      if (connections[i] > maxFd) {
-        maxFd = connections[i];
+    for (int i = 0; i < readyFds; i++) {
+      if (events[i].data.fd == socketDescriptor) {
+        // Accept Client Connection
+        int clientDescriptor = accept(socketDescriptor, NULL, NULL);
+        if (clientDescriptor < 0) {
+          cout << "client accept error : " << clientDescriptor << endl;
+          continue;
+        }
+        cout << "Got client with descriptor : " << clientDescriptor << endl;
+
+        ev.events = EPOLLIN;
+        ev.data.fd = clientDescriptor;
+
+        int clientAdd =
+            epoll_ctl(epollfd, EPOLL_CTL_ADD, clientDescriptor, &ev);
+
+        if (clientAdd == -1) {
+          perror("epoll_ctl client add error");
+          close(clientDescriptor);
+        }
+      } else {
+        handleClient(events[i].data.fd, epollfd);
       }
-      FD_SET(connections[i], &readfds);
-    }
-
-    // Blocks here till any file descriptor is ready
-    int selectReturn = select(maxFd + 1, &readfds, NULL, NULL, NULL);
-    if (selectReturn < 0) {
-      cout << "Error in select, selectReturn : " << selectReturn << endl;
-      break;
-    }
-
-    if (FD_ISSET(socketDescriptor, &readfds)) {
-      // Accept Client Connection
-      int clientDescriptor =
-          accept(socketDescriptor, NULL, NULL); // will block here
-      if (clientDescriptor < 0) {
-        cout << "client accept error : " << clientDescriptor << endl;
-        continue;
-      }
-      cout << "Got client with descriptor : " << clientDescriptor << endl;
-      connections.push_back(clientDescriptor);
-    }
-
-    // Check & Handle client descriptor
-    vector<int> clientRemove;
-    for (int i = 0; i < connections.size(); i++) {
-      if (FD_ISSET(connections[i], &readfds)) {
-        handleClient(connections[i], &clientRemove);
-      }
-    }
-
-    // Remove disconnected / closing clients
-    for (int i = 0; i < clientRemove.size(); i++) {
-      close(clientRemove[i]);
-      connections.erase(
-          std::remove(connections.begin(), connections.end(), clientRemove[i]),
-          connections.end());
     }
   }
 }
