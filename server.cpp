@@ -1,4 +1,5 @@
 #include "config.h"
+#include "logger.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -8,9 +9,39 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <unordered_map>
 #include <vector>
 
 using namespace std;
+
+void parseMessage(char *message, unordered_map<string, string> &messageData) {
+  // Message format
+  // action:key:value:key:value...
+  int count = 0;
+  string temp;
+  string key;
+  int len = strlen(message);
+  for (int i = 0; i < len; i++) {
+    if ((strncmp(&message[i], ":", 1) == 0) || (i == len - 1)) {
+      if (count == 0) {
+        // action
+        messageData["action"] = temp;
+      } else if (count % 2 == 0) {
+        // value
+        messageData[key] = temp;
+        key = "";
+      } else {
+        // key
+        key = temp;
+      }
+
+      count++;
+      temp = "";
+    } else {
+      temp += message[i];
+    }
+  }
+}
 
 void handleClient(int readyFd, int epollfd) {
   char clientMessage[1024] = {0};
@@ -27,8 +58,42 @@ void handleClient(int readyFd, int epollfd) {
   else
     clientMessage[1023] = '\0';
 
-  string serverReply = clientMessage;
-  write(readyFd, serverReply.c_str(), serverReply.size());
+  logger("clientMessage : ", clientMessage);
+
+  string serverReply;
+  unordered_map<string, string> messageData;
+  parseMessage(clientMessage, messageData);
+
+  auto action = messageData.find("action");
+
+  if (action == messageData.end()) {
+    logger("Couldn't find action for message : ", clientMessage);
+    serverReply = "Invalid message";
+  } else {
+    logger("action : ", action->second);
+    const char *registerUser = "register";
+    const char *heartbeat = "heartbeat";
+
+    if (strncmp(action->second.c_str(), registerUser, strlen(registerUser)) ==
+        0) {
+      auto user = messageData.find("username");
+      logger("Registering username : ", user->second);
+
+      // If username already exits, ask to choose another
+      // else register & share passkey
+    } else if (strncmp(action->second.c_str(), registerUser,
+                       strlen(registerUser)) == 0) {
+      auto user = messageData.find("username");
+      logger("Updating IP for username : ", user->second);
+      // Update IP against username
+    } else {
+      // Default
+      logger("Not a valid action");
+      serverReply = "Invalid message";
+    }
+  }
+
+  write(readyFd, serverReply.c_str(), strlen(serverReply.c_str()));
 }
 
 void server() {
