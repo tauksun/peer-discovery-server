@@ -3,6 +3,6 @@
 
 int main() {
   using namespace std;
-  cout << "Initializing..." << endl;
+  cout << "Starting discovery server..." << endl;
   server();
 }

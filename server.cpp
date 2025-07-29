@@ -1,3 +1,4 @@
+#include "config.h"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -26,15 +27,8 @@ void handleClient(int readyFd, int epollfd) {
   else
     clientMessage[1023] = '\0';
 
-  if ((strcmp(clientMessage, "x") != 0)) {
-    string serverReply = clientMessage;
-    write(readyFd, serverReply.c_str(), serverReply.size());
-  } else {
-    string serverReply = "Closing connection";
-    write(readyFd, serverReply.c_str(), serverReply.size());
-    close(readyFd);
-    epoll_ctl(epollfd, EPOLL_CTL_DEL, readyFd, nullptr);
-  }
+  string serverReply = clientMessage;
+  write(readyFd, serverReply.c_str(), serverReply.size());
 }
 
 void server() {
@@ -46,7 +40,7 @@ void server() {
   // Bind
   struct sockaddr_in add;
   add.sin_family = AF_INET;
-  add.sin_port = htons(4345);
+  add.sin_port = htons(Config::TCP_SERVER_PORT);
   add.sin_addr.s_addr = INADDR_ANY;
 
   int bindResult = bind(socketDescriptor, (struct sockaddr *)&add, sizeof(add));
