@@ -43,33 +43,37 @@ void handleClient(
 
   if (action == messageData.end()) {
     logger("Couldn't find action for message : ", clientMessage);
-    serverReply = "Invalid message";
+    serverReply = "invalid message";
   } else {
     logger("action : ", action->second);
-    const char *registerUser = "register";
-    const char *heartbeat = "heartbeat";
+    string registerUser = "register";
+    string heartbeat = "heartbeat";
 
-    if (strncmp(action->second.c_str(), registerUser, strlen(registerUser)) ==
-        0) {
+    if (action->second == registerUser) {
       auto user = messageData.find("username");
-      logger("Registering username : ", user->second);
-
-      // If username already exits, ask to choose another
-      // else register & share passkey
-      bool isAlreadyExists = isUserNameTaken(user->second, peerData);
-      if (isAlreadyExists) {
-        serverReply = "exists";
+      if (user == messageData.end()) {
+        serverReply = "invalid message";
       } else {
-        // Create user
-        if (!createUser(user->second, peerData)) {
-          serverReply = "error";
-        }
-        // Create passkey
-        string passkey;
-        generatePasskey(passkey);
-        storePasskey(passkey, user->second, peerData);
+        if (user->second.length()) {
+          logger("Registering username : ", user->second);
 
-        serverReply = "created:passkey:" + passkey;
+          // If username already exits, ask to choose another
+          // else register & share passkey
+          bool isAlreadyExists = isUserNameTaken(user->second, peerData);
+          if (isAlreadyExists) {
+            serverReply = "exists";
+          } else {
+            // Create user
+            if (!createUser(user->second, peerData)) {
+              serverReply = "error";
+            }
+            // Create passkey
+            string passkey;
+            generatePasskey(passkey);
+            storePasskey(passkey, user->second, peerData);
+            serverReply = "created:passkey:" + passkey;
+          }
+        }
       }
 
     } else if (action->second == heartbeat) {
@@ -80,11 +84,11 @@ void handleClient(
     } else {
       // Default
       logger("Not a valid action");
-      serverReply = "Invalid message";
+      serverReply = "invalid message";
     }
   }
 
-  serverReply = "discovery:messsage:" + serverReply;
+  serverReply = "discovery:message:" + serverReply;
   write(readyFd, serverReply.c_str(), strlen(serverReply.c_str()));
 }
 
