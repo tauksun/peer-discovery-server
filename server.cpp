@@ -1,5 +1,7 @@
 #include "config.h"
 #include "logger.hpp"
+#include "parser.hpp"
+#include "peerData.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -14,36 +16,9 @@
 
 using namespace std;
 
-void parseMessage(char *message, unordered_map<string, string> &messageData) {
-  // Message format
-  // action:key:value:key:value...
-  int count = 0;
-  string temp;
-  string key;
-  int len = strlen(message);
-  for (int i = 0; i < len; i++) {
-    if ((strncmp(&message[i], ":", 1) == 0) || (i == len - 1)) {
-      if (count == 0) {
-        // action
-        messageData["action"] = temp;
-      } else if (count % 2 == 0) {
-        // value
-        messageData[key] = temp;
-        key = "";
-      } else {
-        // key
-        key = temp;
-      }
-
-      count++;
-      temp = "";
-    } else {
-      temp += message[i];
-    }
-  }
-}
-
-void handleClient(int readyFd, int epollfd) {
+void handleClient(
+    int readyFd, int epollfd,
+    unordered_map<string, unordered_map<string, string>> &peerData) {
   char clientMessage[1024] = {0};
   int recvValue = recv(readyFd, clientMessage, 1023, 0);
 
@@ -81,10 +56,26 @@ void handleClient(int readyFd, int epollfd) {
 
       // If username already exits, ask to choose another
       // else register & share passkey
-    } else if (strncmp(action->second.c_str(), registerUser,
-                       strlen(registerUser)) == 0) {
+      bool isAlreadyExists = isUserNameTaken(user->second, peerData);
+      if (isAlreadyExists) {
+        serverReply = "exists";
+      } else {
+        // Create user
+        if (!createUser(user->second, peerData)) {
+          serverReply = "error";
+        }
+        // Create passkey
+        string passkey;
+        generatePasskey(passkey);
+        storePasskey(passkey, user->second, peerData);
+
+        serverReply = "created:passkey:" + passkey;
+      }
+
+    } else if (action->second == heartbeat) {
       auto user = messageData.find("username");
       logger("Updating IP for username : ", user->second);
+
       // Update IP against username
     } else {
       // Default
@@ -93,11 +84,14 @@ void handleClient(int readyFd, int epollfd) {
     }
   }
 
+  serverReply = "discovery:messsage:" + serverReply;
   write(readyFd, serverReply.c_str(), strlen(serverReply.c_str()));
 }
 
 void server() {
   cout << "Starting server" << endl;
+  unordered_map<string, unordered_map<string, string>> peerData;
+
   // Socket
   int socketDescriptor = socket(AF_INET, SOCK_STREAM, 0);
   cout << "Created socket with descriptor : " << socketDescriptor << endl;
@@ -177,7 +171,7 @@ void server() {
           close(clientDescriptor);
         }
       } else {
-        handleClient(events[i].data.fd, epollfd);
+        handleClient(events[i].data.fd, epollfd, peerData);
       }
     }
   }
